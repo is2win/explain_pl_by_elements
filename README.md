@@ -3,53 +3,42 @@
 ## Описание проекта
 Этот проект реализует методологию распределения изменения стоимости деривативного контракта по компонентам
 
-## Шаги расчёта spot_delta
-1. **Вычисление общего изменения PV**: ΔPV = PV_сегодня - PV_вчера. Это полное изменение стоимости контракта за день.
+## Шаги расчёта
+Функция `compute_spot_delta` теперь вычисляет не только spot_delta, но и spot_cross_gamma и residual:
 
-2. **Сбор изменений спот-цен**: Для каждого актива i: ΔS_i = S_сегодня_i - S_вчера_i.
+1. **Вычисление общего изменения PV**: ΔPV = PV_сегодня - PV_вчера.
 
-3. **Сумма абсолютных изменений**: Sum = ∑ |ΔS_i| по всем активам.
+2. **Spot delta**: Аппроксимация вклада по активам пропорционально |ΔS_i| или использование реальных дельт (если переданы).
 
-4. **Оценка delta_i для каждого актива**: delta_i ≈ (ΔPV × |ΔS_i| / Sum) / ΔS_i. Это распределяет вклад пропорционально "весу" движения каждого актива.
+3. **Нелинейный остаток**: remainder = ΔPV - total_spot_delta.
 
-5. **Вклад spot_delta для актива**: contribution_i = delta_i × ΔS_i.
+4. **Сумма парных произведений**: pair_sum = ∑_{i<j} ΔS_i × ΔS_j.
 
-6. **Суммирование**: Общая spot_delta-компонента — сумма contribution_i по всем активам (равна ΔPV).
+5. **Spot cross gamma**: gamma ≈ remainder / pair_sum (если pair_sum ≠ 0).
 
-Это даёт линейную аппроксимацию изменения PV за счёт спот-цен.
+6. **Residual**: residual = ΔPV - total_spot_delta - gamma.
 
 ## Формат ввода данных
-Ввод — словарь (в Python) или JSON-объект:
-
-```json
-{
-  "PV_yesterday": <float>,  // PV вчера (обязательно)
-  "PV_today": <float>,      // PV сегодня (обязательно)
-  "spots": {                // Словарь спот-цен (динамический)
-    "<asset_name>": {
-      "yesterday": <float>,
-      "today": <float>
-    }
-    // ... дополнительные активы
-  }
-}
-```
+Не изменился, но добавлен опциональный параметр real_deltas (словарь {asset: delta_i}).
 
 ## Пример использования
-В файле `spot_delta.py` есть функция `compute_spot_delta(input_data)` и пример:
-
 ```python
 example_input = {
     "PV_yesterday": 1000.0,
-    "PV_today": 1050.0,
+    "PV_today": 1100.0,
     "spots": {
-        "Sber": {"yesterday": 200.0, "today": 205.0},
+        "Sber": {"yesterday": 200.0, "today": 210.0},
         "VTB": {"yesterday": 150.0, "today": 148.0},
-        "Gazprom": {"yesterday": 300.0, "today": 310.0}
+        "Gazprom": {"yesterday": 300.0, "today": 305.0}
     }
 }
 result = compute_spot_delta(example_input)
-print(result)  # Пример: {'Sber': 14.705882352941176, 'VTB': -5.88235294117647, 'Gazprom': 41.1764705882353}
+print(result)  # {'spot_deltas': {...}, 'total_spot_delta': 100.0, ... 'residual': 0.0}
+
+# С реальными дельтами
+real_deltas = {"Sber": 5.0, "VTB": -3.0, "Gazprom": 4.0}
+result_with_real = compute_spot_delta(example_input, real_deltas=real_deltas)
+print(result_with_real)
 ```
 
 Сумма значений = 50.0 (ΔPV).
