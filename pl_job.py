@@ -369,19 +369,14 @@ if __name__ == "__main__":
             if job == 'calc_pairs_shift_PV':
                 valDate, mdName, mdData = qlContext._loadMarketData(MARKET_DATA_FILE_NAME_ZERO)
                 fixings_real = qlContext._loadFixings(FIXINGS_FILE_NAME_T_PLUS)
-                epsilon = 1.0001  # Малый сдвиг для finite difference, исправляем с 10.0001
-                h = epsilon - 1  # Размер сдвига в относительных единицах
+                epsilon = 1.0001
+                h = epsilon - 1
 
-                # Базовый PV на T0 (используем global_t0_PV или рассчитываем заново если нужно
-                # Но предполагаем, что global_t0_PV уже есть; если нет, добавить расчёт
                 PV_base = global_t0_PV
 
                 pairs_list = get_assets_pairs(new_assets_inf_fc)
                 
-                import multiprocessing
-                from functools import partial
-
-                pool = multiprocessing.Pool(processes=multiprocessing.cpu_count())  # Параллелизация
+                # Убираем multiprocessing для последовательного выполнения
 
                 results = []
                 for pair in pairs_list:
@@ -389,31 +384,27 @@ if __name__ == "__main__":
                     
                     # Индивидуальные сдвиги
                     shift1 = {asset1: h}
-                    res1 = pool.apply_async(calc_pv_for_shift, (fixings_real, shift1, valDate, mdName, mdData, job))
+                    res1 = calc_pv_for_shift(fixings_real, shift1, valDate, mdName, mdData, job)
+                    PV1 = res1['clean_PV_val']
                     
                     shift2 = {asset2: h}
-                    res2 = pool.apply_async(calc_pv_for_shift, (fixings_real, shift2, valDate, mdName, mdData, job))
+                    res2 = calc_pv_for_shift(fixings_real, shift2, valDate, mdName, mdData, job)
+                    PV2 = res2['clean_PV_val']
                     
                     # Двойной сдвиг
                     shift12 = {asset1: h, asset2: h}
-                    res12 = pool.apply_async(calc_pv_for_shift, (fixings_real, shift12, valDate, mdName, mdData, job))
-                    
-                    # Получаем результаты
-                    PV1 = res1.get()['clean_PV_val']
-                    PV2 = res2.get()['clean_PV_val']
-                    PV12 = res12.get()['clean_PV_val']
+                    res12 = calc_pv_for_shift(fixings_real, shift12, valDate, mdName, mdData, job)
+                    PV12 = res12['clean_PV_val']
                     
                     # Расчёт cross_gamma
-                    cross_gamma = (PV12 - PV1 - PV2 + PV_base) / (h * h)  # Поскольку h1 = h2 = h
+                    cross_gamma = (PV12 - PV1 - PV2 + PV_base) / (h * h)
                     
-                    # Delta изменений цен (аналогично существующему)
+                    # Delta изменений цен
                     delta_percent1, delta_val1 = calc_delta_price_between_dates(fixings_real, asset1, valDate, valDate + timedelta(days=1))
                     delta_percent2, delta_val2 = calc_delta_price_between_dates(fixings_real, asset2, valDate, valDate + timedelta(days=1))
                     
-                    # Компонент вклада в spot_cross_gamma
-                    cross_gamma_contrib = cross_gamma * (delta_val1 * delta_val2)  # Или delta_percent, в зависимости от единиц; по методологии delta_S1 * delta_S2
+                    cross_gamma_contrib = cross_gamma * (delta_val1 * delta_val2)
                     
-                    # Сохраняем в result
                     result = {
                         'job': job,
                         'for_asset_calc': pair,
@@ -425,15 +416,11 @@ if __name__ == "__main__":
                         'PV12': PV12,
                         'delta_S1': delta_val1,
                         'delta_S2': delta_val2,
-                        # ... добавить другие поля если нужно
                     }
-                    # TODO: Для сокращения O(n^2) - фильтровать pairs_list по коррелированным активам, напр. если corr(asset1, asset2) > threshold
+                    # TODO: Фильтр по корреляциям
                     results.append(result)
                 
-                pool.close()
-                pool.join()
-                
-                calc_resalts.extend(results)  # Вместо append по одному
+                calc_resalts.extend(results)
     try:
         df= pd.DataFrame(calc_resalts)
         df.to_excel(r" PATH ")
