@@ -331,80 +331,78 @@ if __name__ == "__main__":
                 )
                 calc_resalts.append(result)
             if job == 'calc_PV_shift_prices_0_01_per_t0':
-                valDate, mdName, mdData = qlContext._loadMarketData(MARKET_DATA_FILE_NAME_ZERO)
-                fixings_real = qlContext._loadFixings(FIXINGS_FILE_NAME_T_PLUS)
-                epsilon_percent = 10.0001
-                for asset in new_assets_inf_fc:
-                    # Меняем маркет дату
-                   date_target = datetime.datetime(2025, 3, 12).date()
-                    print(f"valdate == targetdate = {valDate==date_target}")
-                    delta, fixings = refactor_prices(fixings_real, asset, valDate, epsilon_percent)
-                    result = make_calc(
-                        valDate=valDate,
-                        mdName=mdName,
-                        mdData=mdData,
-                        fixings=fixings,
-                        job=job,
-                        comment=f"PV_BA=[{asset}]_незначительный_рост_ба",
-                        for_asset_calc=asset
-                    )
-                    result['old_price_last'] = fixings_real[asset][-2:]
-                    result['new_price_last'] = fixings[asset][-2:]
-                    result['delta_change_asset_percent'], result['delta_change_asset_in_val'] = calc_delta_price_between_dates(
-                        fixings=fixings_real,
-                        asset=asset,
-                        date_last=valDate,
-                        date_future = valDate + timedelta(days=1)
-                    )
-                    result['epsilon_in_points_notional'] = delta
-                    result['epsilon_in_percent'] = epsilon_percent - 1
-                    result['global_t0_PV'] = global_t0_PV
-                    tmp_delta_pv = result['clean_PV_val'] - result['global_t0_PV']
-                    if tmp_delta_pv != 0.0:
-                        result['delta_PV'] = (result['clean_PV_val'] - result['global_t0_PV']) / result['epsilon_in_percent']
-                    else:
-                        result['delta_PV'] = 0
-                    result['spot_delta'] = result['delta_PV'] * result['delta_change_asset_percent']
-                    calc_resalts.append(result)
+                # Объединено в calc_pairs_shift_PV для избежания дублирования; оставляем только если нужны другие расчёты
+                pass  # Или удалить job если не нужен
             if job == 'calc_pairs_shift_PV':
                 valDate, mdName, mdData = qlContext._loadMarketData(MARKET_DATA_FILE_NAME_ZERO)
                 fixings_real = qlContext._loadFixings(FIXINGS_FILE_NAME_T_PLUS)
                 epsilon = 1.0001
                 h = epsilon - 1
-
                 PV_base = global_t0_PV
+                assets_list = new_assets_inf_fc
+                pairs_list = get_assets_pairs(assets_list)
 
-                pairs_list = get_assets_pairs(new_assets_inf_fc)
-                
-                # Убираем multiprocessing для последовательного выполнения
+                results = []  # Для cross-gamma пар
+                diagonal_results = []  # Для диагональной gamma
+                delta_results = []  # Для spot_delta
 
-                results = []
+                # Кэш PV для индивидуальных +h сдвигов
+                pv_h_cache = {}
+                for asset in assets_list:
+                    shift_h = {asset: h}
+                    res_h = calc_pv_for_shift(fixings_real, shift_h, valDate, mdName, mdData, job)
+                    PV_h = res_h['clean_PV_val']
+                    pv_h_cache[asset] = PV_h
+
+                    # Расчёт spot_delta (переиспользуем PV_h)
+                    delta_percent, delta_val = calc_delta_price_between_dates(fixings_real, asset, valDate, valDate + timedelta(days=1))
+                    delta_pv = (PV_h - PV_base) / h
+                    spot_delta = delta_pv * delta_percent
+                    delta_result = {
+                        'job': job,
+                        'for_asset_calc': asset,
+                        'spot_delta': spot_delta,
+                        'delta_pv': delta_pv,
+                        'PV_base': PV_base,
+                        'PV_h': PV_h,
+                        'delta_percent': delta_percent,
+                        'delta_val': delta_val,
+                    }
+                    delta_results.append(delta_result)
+
+                # Диагональная gamma (используем PV_h из кэша, рассчитываем PV_2h)
+                for asset in assets_list:
+                    PV_h = pv_h_cache[asset]
+                    shift_2h = {asset: 2 * h}
+                    res_2h = calc_pv_for_shift(fixings_real, shift_2h, valDate, mdName, mdData, job)
+                    PV_2h = res_2h['clean_PV_val']
+                    gamma = (PV_2h - 2 * PV_h + PV_base) / (h ** 2)
+                    _, delta_val = calc_delta_price_between_dates(fixings_real, asset, valDate, valDate + timedelta(days=1))
+                    gamma_contrib = (gamma * (delta_val ** 2)) / 2
+                    diag_result = {
+                        'job': job,
+                        'for_asset_calc': (asset, asset),
+                        'gamma': gamma,
+                        'gamma_contrib': gamma_contrib,
+                        'PV_base': PV_base,
+                        'PV_h': PV_h,
+                        'PV_2h': PV_2h,
+                        'delta_S': delta_val,
+                    }
+                    diagonal_results.append(diag_result)
+
+                # Cross-gamma для пар (переиспользуем PV_h из кэша как PV1/PV2)
                 for pair in pairs_list:
                     asset1, asset2 = pair
-                    
-                    # Индивидуальные сдвиги
-                    shift1 = {asset1: h}
-                    res1 = calc_pv_for_shift(fixings_real, shift1, valDate, mdName, mdData, job)
-                    PV1 = res1['clean_PV_val']
-                    
-                    shift2 = {asset2: h}
-                    res2 = calc_pv_for_shift(fixings_real, shift2, valDate, mdName, mdData, job)
-                    PV2 = res2['clean_PV_val']
-                    
-                    # Двойной сдвиг
+                    PV1 = pv_h_cache[asset1]
+                    PV2 = pv_h_cache[asset2]
                     shift12 = {asset1: h, asset2: h}
                     res12 = calc_pv_for_shift(fixings_real, shift12, valDate, mdName, mdData, job)
                     PV12 = res12['clean_PV_val']
-                    
-                    # Расчёт cross_gamma
                     cross_gamma = (PV12 - PV1 - PV2 + PV_base) / (h * h)
-                    
-                    # Delta изменений цен
-                    delta_percent1, delta_val1 = calc_delta_price_between_dates(fixings_real, asset1, valDate, valDate + timedelta(days=1))
-                    delta_percent2, delta_val2 = calc_delta_price_between_dates(fixings_real, asset2, valDate, valDate + timedelta(days=1))
-                    
+                    _, delta_val1 = calc_delta_price_between_dates(fixings_real, asset1, valDate, valDate + timedelta(days=1))
+                    _, delta_val2 = calc_delta_price_between_dates(fixings_real, asset2, valDate, valDate + timedelta(days=1))
                     cross_gamma_contrib = cross_gamma * (delta_val1 * delta_val2)
-                    
                     result = {
                         'job': job,
                         'for_asset_calc': pair,
@@ -417,9 +415,23 @@ if __name__ == "__main__":
                         'delta_S1': delta_val1,
                         'delta_S2': delta_val2,
                     }
-                    # TODO: Фильтр по корреляциям
                     results.append(result)
-                
+
+                # Суммирование
+                cross_terms_sum = sum(res['cross_gamma_contrib'] for res in results)
+                diagonal_terms_sum = sum(res['gamma_contrib'] for res in diagonal_results)
+                total_spot_cross_gamma = cross_terms_sum + diagonal_terms_sum
+                total_spot_delta = sum(res['spot_delta'] for res in delta_results)  # Сумма spot_delta по активам
+
+                # Summary
+                calc_resalts.append({'job': 'summary', 'comment': 'Total spot_delta', 'value': total_spot_delta})
+                calc_resalts.append({'job': 'summary', 'comment': 'Cross terms sum', 'value': cross_terms_sum})
+                calc_resalts.append({'job': 'summary', 'comment': 'Diagonal terms sum', 'value': diagonal_terms_sum})
+                calc_resalts.append({'job': 'summary', 'comment': 'Total spot_cross_gamma', 'value': total_spot_cross_gamma})
+
+                # Добавляем все
+                calc_resalts.extend(delta_results)
+                calc_resalts.extend(diagonal_results)
                 calc_resalts.extend(results)
     try:
         df= pd.DataFrame(calc_resalts)
