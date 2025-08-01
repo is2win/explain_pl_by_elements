@@ -272,6 +272,28 @@ def calc_pv_for_shift(fixings_base, shifts, valDate, mdName, mdData, job):
                 break
     return make_calc(valDate, mdName, mdData, fixings, job, comment="Shift calc", for_asset_calc="shift")
 
+def replace_prices_between_dates(fixings_base, assets, date_from, date_to):
+    import copy
+    fixings = copy.deepcopy(fixings_base)
+    for asset in assets:
+        price_from = None
+        price_to = None
+        idx_from = None
+        for i, (date_get, price) in enumerate(fixings.get(asset, [])):
+            if date_get == date_from:
+                price_from = price
+                idx_from = i
+            if date_get == date_to:
+                price_to = price
+            if price_from is not None and price_to is not None:
+                break
+        if price_to is not None and idx_from is not None:
+            fixings[asset][idx_from] = (date_from, price_to)
+            print(f"Заменили цену для {asset} на {date_from}: {price_from} -> {price_to}")
+        else:
+            print(f"Предупреждение: Не удалось заменить цену для {asset} (цены на {date_to} или {date_from} не найдены)")
+    return fixings
+
 
 if __name__ == "__main__":
     import datetime
@@ -317,16 +339,17 @@ if __name__ == "__main__":
 
             if job == 'compute_pv_with_t1_prices':
                 valDate, mdName, mdData = qlContext._loadMarketData(MARKET_DATA_FILE_NAME_ZERO)
-                fixings_real = qlContext._loadFixings(FIXINGS_FILE_NAME_T_PLUS)
-                # Нужно сдвинуть дату для расчетов valDate берется из названия файла а оно Т0
-                valDate = valDate + timedelta(days=1)
+                fixings = qlContext._loadFixings(FIXINGS_FILE_NAME_T_PLUS)  # Базовые fixings на T0
+                valDate = valDate  # Сдвигаем valDate на T+1
+                # Заменяем цены на valDate-1 (T0) ценами с valDate (T+1), только для BA в контракте
+                fixings_modified = replace_prices_between_dates(fixings, new_assets_inf_fc, date_from=valDate, date_to=valDate + timedelta(days=1))
                 result = make_calc(
                     valDate=valDate,
                     mdName=mdName,
                     mdData=mdData,
-                    fixings=fixings_real,
+                    fixings=fixings_modified,
                     job=job,
-                    comment=f'Делаем расчет на дату {valDate}, по ценам на {valDate}, маркетдата на {valDate - timedelta(days=1)}'
+                    comment=f'Расчёт на дату {valDate}, с ценами заменёнными на цены {valDate + timedelta(days=1)} для BA контракта'
                 )
                 calc_resalts.append(result)
 
