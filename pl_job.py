@@ -261,6 +261,18 @@ def get_assets_pairs(assets_list):
     return pairs
 
 
+# Выносим функцию на верхний уровень для multiprocessing
+import copy  # Если не импортировано ранее
+def calc_pv_for_shift(fixings_base, shifts, valDate, mdName, mdData, job):
+    fixings = copy.deepcopy(fixings_base)
+    for asset, delta_mult in shifts.items():
+        for i, (date_get, price) in enumerate(fixings[asset]):
+            if date_get == valDate:
+                fixings[asset][i] = (date_get, price * (1 + delta_mult))
+                break
+    return make_calc(valDate, mdName, mdData, fixings, job, comment="Shift calc", for_asset_calc="shift")
+
+
 if __name__ == "__main__":
     import datetime
     from datetime import timedelta
@@ -369,15 +381,6 @@ if __name__ == "__main__":
                 import multiprocessing
                 from functools import partial
 
-                def calc_pv_for_shift(fixings_base, shifts, valDate, mdName, mdData):
-                    fixings = copy.deepcopy(fixings_base)
-                    for asset, delta_mult in shifts.items():
-                        for i, (date_get, price) in enumerate(fixings[asset]):
-                            if date_get == valDate:
-                                fixings[asset][i] = (date_get, price * (1 + delta_mult))
-                                break
-                    return make_calc(valDate, mdName, mdData, fixings, job, comment="Shift calc", for_asset_calc=asset)
-
                 pool = multiprocessing.Pool(processes=multiprocessing.cpu_count())  # Параллелизация
 
                 results = []
@@ -386,14 +389,14 @@ if __name__ == "__main__":
                     
                     # Индивидуальные сдвиги
                     shift1 = {asset1: h}
-                    res1 = pool.apply_async(calc_pv_for_shift, (fixings_real, shift1, valDate, mdName, mdData))
+                    res1 = pool.apply_async(calc_pv_for_shift, (fixings_real, shift1, valDate, mdName, mdData, job))
                     
                     shift2 = {asset2: h}
-                    res2 = pool.apply_async(calc_pv_for_shift, (fixings_real, shift2, valDate, mdName, mdData))
+                    res2 = pool.apply_async(calc_pv_for_shift, (fixings_real, shift2, valDate, mdName, mdData, job))
                     
                     # Двойной сдвиг
                     shift12 = {asset1: h, asset2: h}
-                    res12 = pool.apply_async(calc_pv_for_shift, (fixings_real, shift12, valDate, mdName, mdData))
+                    res12 = pool.apply_async(calc_pv_for_shift, (fixings_real, shift12, valDate, mdName, mdData, job))
                     
                     # Получаем результаты
                     PV1 = res1.get()['clean_PV_val']
