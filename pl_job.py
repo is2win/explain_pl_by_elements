@@ -5,7 +5,7 @@ import sys
 
 import pandas as pd
 
-sys.path.append("PATH”)
+sys.path.append("PATH")
 
 
 from common2 import tools as ctools
@@ -15,13 +15,13 @@ from ql2.products import _eqBasket
 
 
 
-MARKET_DATA_FILE_NAME_ZERO = r PATH "
+MARKET_DATA_FILE_NAME_ZERO = r"PATH"
 
 
-FIXINGS_FILE_NAME_ZERO = r" PATH "
-FIXINGS_FILE_NAME_T_PLUS = r PATH "
+FIXINGS_FILE_NAME_ZERO = r"PATH"
+FIXINGS_FILE_NAME_T_PLUS = r"PATH"
 
-TERM_FILE_NAME = r" PATH "
+TERM_FILE_NAME = r"PATH"
 
 
 
@@ -283,17 +283,16 @@ if __name__ == "__main__":
 
 
 
-    tradeId = “id”
+    tradeId = "id"
 
     term = loadTerm(tradeId)
     # Синтетические БА заменить надо для корректировки маркет даты
     new_assets_inf_fc = rename_asset_synthetic(term.syntheticDef, term.uls)
 
     jobs = {
-        'calc_PV_date_zero': 1,
-        'calc_PV_shift_t1_prices': 1,
-        'calc_PV_shift_prices_0_01_per_t0': 1,
-        'calc_pairs_shift_PV': 1
+        'compute_pv_at_t0': 1,
+        'compute_pv_with_t1_prices': 1,
+        'compute_spot_factors': 1
     }
 
     calc_resalts = []
@@ -301,7 +300,7 @@ if __name__ == "__main__":
 
     for job, status in jobs.items():
         if status:
-           if job == 'calc_PV_date_zero':
+           if job == 'compute_pv_at_t0':
                 valDate, mdName, mdData = qlContext._loadMarketData(MARKET_DATA_FILE_NAME_ZERO)
                 fixings_real = qlContext._loadFixings(FIXINGS_FILE_NAME_ZERO)
                 result = make_calc(
@@ -316,7 +315,7 @@ if __name__ == "__main__":
                 global_t0_PV = result['clean_PV_val']
                 calc_resalts.append(result)
 
-            if job == 'calc_PV_shift_t1_prices':
+            if job == 'compute_pv_with_t1_prices':
                 valDate, mdName, mdData = qlContext._loadMarketData(MARKET_DATA_FILE_NAME_ZERO)
                 fixings_real = qlContext._loadFixings(FIXINGS_FILE_NAME_T_PLUS)
                 # Нужно сдвинуть дату для расчетов valDate берется из названия файла а оно Т0
@@ -330,10 +329,8 @@ if __name__ == "__main__":
                     comment=f'Делаем расчет на дату {valDate}, по ценам на {valDate}, маркетдата на {valDate - timedelta(days=1)}'
                 )
                 calc_resalts.append(result)
-            if job == 'calc_PV_shift_prices_0_01_per_t0':
-                # Объединено в calc_pairs_shift_PV для избежания дублирования; оставляем только если нужны другие расчёты
-                pass  # Или удалить job если не нужен
-            if job == 'calc_pairs_shift_PV':
+
+            if job == 'compute_spot_factors':
                 valDate, mdName, mdData = qlContext._loadMarketData(MARKET_DATA_FILE_NAME_ZERO)
                 fixings_real = qlContext._loadFixings(FIXINGS_FILE_NAME_T_PLUS)
                 epsilon = 1.0001
@@ -429,13 +426,24 @@ if __name__ == "__main__":
                 calc_resalts.append({'job': 'summary', 'comment': 'Diagonal terms sum', 'value': diagonal_terms_sum})
                 calc_resalts.append({'job': 'summary', 'comment': 'Total spot_cross_gamma', 'value': total_spot_cross_gamma})
 
+                # Расчёт spot_residual
+                pv_t1_results = [res['clean_PV_val'] for res in calc_resalts if res.get('job') == 'compute_pv_with_t1_prices']
+                if pv_t1_results:
+                    pv_t1 = pv_t1_results[0]
+                    delta_pv = pv_t1 - global_t0_PV
+                    spot_residual = delta_pv - total_spot_delta - total_spot_cross_gamma
+                    calc_resalts.append({'job': 'summary', 'comment': 'Delta PV', 'value': delta_pv})
+                    calc_resalts.append({'job': 'summary', 'comment': 'Spot residual', 'value': spot_residual})
+                else:
+                    print("Предупреждение: Не найден PV для 'compute_pv_with_t1_prices' для расчёта spot_residual")
+
                 # Добавляем все
                 calc_resalts.extend(delta_results)
                 calc_resalts.extend(diagonal_results)
                 calc_resalts.extend(results)
     try:
         df= pd.DataFrame(calc_resalts)
-        df.to_excel(r" PATH ")
+        df.to_excel(r"PATH")
     except Exception as ex:
         print(f"Error = {ex}")
 
