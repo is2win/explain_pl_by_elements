@@ -292,7 +292,7 @@ if __name__ == "__main__":
     jobs = {
         'compute_pv_at_t0': 1,
         'compute_pv_with_t1_prices': 1,
-        'compute_spot_factors': 1
+        'compute_spot_factors': 1,
     }
 
     calc_resalts = []
@@ -351,10 +351,10 @@ if __name__ == "__main__":
                     PV_h = res_h['clean_PV_val']
                     pv_h_cache[asset] = PV_h
 
-                    # Расчёт spot_delta (переиспользуем PV_h)
+                    # Расчёт spot_delta (в %PV)
                     delta_percent, delta_val = calc_delta_price_between_dates(fixings_real, asset, valDate, valDate + timedelta(days=1))
-                    delta_pv = (PV_h - PV_base) / h
-                    spot_delta = delta_pv * delta_percent
+                    delta_pv = (PV_h - PV_base) / h  # delta в %PV / %shift
+                    spot_delta = delta_pv * delta_percent  # вклад в %PV
                     delta_result = {
                         'job': job,
                         'for_asset_calc': asset,
@@ -363,19 +363,19 @@ if __name__ == "__main__":
                         'PV_base': PV_base,
                         'PV_h': PV_h,
                         'delta_percent': delta_percent,
-                        'delta_val': delta_val,
+                        # 'delta_val': delta_val,  # Удалено, т.к. используем % для coherence
                     }
                     delta_results.append(delta_result)
 
-                # Диагональная gamma (используем PV_h из кэша, рассчитываем PV_2h)
+                # Диагональная gamma (в %PV / (%shift)^2)
                 for asset in assets_list:
                     PV_h = pv_h_cache[asset]
                     shift_2h = {asset: 2 * h}
                     res_2h = calc_pv_for_shift(fixings_real, shift_2h, valDate, mdName, mdData, job)
                     PV_2h = res_2h['clean_PV_val']
                     gamma = (PV_2h - 2 * PV_h + PV_base) / (h ** 2)
-                    _, delta_val = calc_delta_price_between_dates(fixings_real, asset, valDate, valDate + timedelta(days=1))
-                    gamma_contrib = (gamma * (delta_val ** 2)) / 2
+                    delta_percent, _ = calc_delta_price_between_dates(fixings_real, asset, valDate, valDate + timedelta(days=1))
+                    gamma_contrib = (gamma * (delta_percent ** 2)) / 2  # вклад в %PV
                     diag_result = {
                         'job': job,
                         'for_asset_calc': (asset, asset),
@@ -384,7 +384,8 @@ if __name__ == "__main__":
                         'PV_base': PV_base,
                         'PV_h': PV_h,
                         'PV_2h': PV_2h,
-                        'delta_S': delta_val,
+                        'delta_percent': delta_percent,
+                        # 'delta_S': delta_val,  # Удалено, т.к. используем %
                     }
                     diagonal_results.append(diag_result)
 
@@ -397,9 +398,9 @@ if __name__ == "__main__":
                     res12 = calc_pv_for_shift(fixings_real, shift12, valDate, mdName, mdData, job)
                     PV12 = res12['clean_PV_val']
                     cross_gamma = (PV12 - PV1 - PV2 + PV_base) / (h * h)
-                    _, delta_val1 = calc_delta_price_between_dates(fixings_real, asset1, valDate, valDate + timedelta(days=1))
-                    _, delta_val2 = calc_delta_price_between_dates(fixings_real, asset2, valDate, valDate + timedelta(days=1))
-                    cross_gamma_contrib = cross_gamma * (delta_val1 * delta_val2)
+                    delta_percent1, _ = calc_delta_price_between_dates(fixings_real, asset1, valDate, valDate + timedelta(days=1))
+                    delta_percent2, _ = calc_delta_price_between_dates(fixings_real, asset2, valDate, valDate + timedelta(days=1))
+                    cross_gamma_contrib = cross_gamma * (delta_percent1 * delta_percent2)  # вклад в %PV
                     result = {
                         'job': job,
                         'for_asset_calc': pair,
@@ -409,16 +410,18 @@ if __name__ == "__main__":
                         'PV1': PV1,
                         'PV2': PV2,
                         'PV12': PV12,
-                        'delta_S1': delta_val1,
-                        'delta_S2': delta_val2,
+                        'delta_percent1': delta_percent1,
+                        'delta_percent2': delta_percent2,
+                        # 'delta_S1': delta_val1,  # Удалено
+                        # 'delta_S2': delta_val2,  # Удалено
                     }
                     results.append(result)
 
-                # Суммирование
+                # Суммирование (всё в %PV)
                 cross_terms_sum = sum(res['cross_gamma_contrib'] for res in results)
                 diagonal_terms_sum = sum(res['gamma_contrib'] for res in diagonal_results)
                 total_spot_cross_gamma = cross_terms_sum + diagonal_terms_sum
-                total_spot_delta = sum(res['spot_delta'] for res in delta_results)  # Сумма spot_delta по активам
+                total_spot_delta = sum(res['spot_delta'] for res in delta_results)  # Сумма spot_delta по активам в %PV
 
                 # Summary
                 calc_resalts.append({'job': 'summary', 'comment': 'Total spot_delta', 'value': total_spot_delta})
@@ -426,12 +429,12 @@ if __name__ == "__main__":
                 calc_resalts.append({'job': 'summary', 'comment': 'Diagonal terms sum', 'value': diagonal_terms_sum})
                 calc_resalts.append({'job': 'summary', 'comment': 'Total spot_cross_gamma', 'value': total_spot_cross_gamma})
 
-                # Расчёт spot_residual
+                # Расчёт spot_residual (в %PV)
                 pv_t1_results = [res['clean_PV_val'] for res in calc_resalts if res.get('job') == 'compute_pv_with_t1_prices']
                 if pv_t1_results:
                     pv_t1 = pv_t1_results[0]
-                    delta_pv = pv_t1 - global_t0_PV
-                    spot_residual = delta_pv - total_spot_delta - total_spot_cross_gamma
+                    delta_pv = pv_t1 - global_t0_PV  # delta_pv в %PV
+                    spot_residual = delta_pv - total_spot_delta - total_spot_cross_gamma  # residual в %PV
                     calc_resalts.append({'job': 'summary', 'comment': 'Delta PV', 'value': delta_pv})
                     calc_resalts.append({'job': 'summary', 'comment': 'Spot residual', 'value': spot_residual})
                 else:
